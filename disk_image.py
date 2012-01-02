@@ -17,15 +17,21 @@
 # 59 Temple Place, Suite 330, Boston, MA 02111-1307 USA.
 
 import os
+import uuid
+import glob
 import crypt
 import random
-import uuid
 import subprocess
 import contextlib
 
-import guestfs
+try:
+    import guestfs
+    no_guestfs = False
+except ImportError:
+    no_guestfs = True
 
-from utils import netsz2netmask, ip2int, int2ip
+from utils import netsz2netmask, ip2int, int2ip, logger
+from common import CloudError
 
 
 def run(cmd):
@@ -39,7 +45,8 @@ def make_image(src_fname,
                qcow2_compress=False,
                qcow2_preallocate=False,
                lvm_dev1=None,
-               lvm_dev2=None):
+               lvm_dev2=None,
+               delete_on_exit=True):
 
     bstore_raw = None
     is_bstore_dev = False
@@ -108,45 +115,99 @@ def make_image(src_fname,
     try:
         yield dst_fname
     finally:
-        map(os.unlink, rm_files)
+        if delete_on_exit:
+            map(os.unlink, rm_files)
 
 
 class LocalGuestFS(object):
     def __init__(self, root):
         self.root = root
 
-    def write(self, fname, val):
-        open(os.path.join(self.root, fname), 'w').write(val)
+    def path(self, rpath):
+        return os.path.join(self.root, rpath[1:])
 
-    def read_file(self, path):
-        return open(os.path.join(self.root, path), 'r').read()
+    def write(self, fname, val):
+        open(self.path(fname), 'w').write(val)
+
+    def read_file(self, fname):
+        return open(self.path(fname), 'r').read()
+
+    def exists(self, path):
+        return os.path.exists(self.path(path))
+
+    def mkdir_p(self, path):
+        cp = self.root
+        path_els = path.split(path[1:], '/')
+        for el in path_els:
+            cp = os.path.join(cp, el)
+            os.mkdir(cp)
 
 
 def prepare_guest(*dt, **mp):
+    if no_guestfs:
+        raise CloudError("No libguestfs found. Can't manage vm images")
     return prepare_guest_debian(*dt, **mp)
+
+
+@contextlib.contextmanager
+def mount_dimage(image, mdir, dev='/dev/nbd0'):
+    cmd = "qemu-nbd -c {dev} {img}".format(dev=dev, image=image)
+    subprocess.check_call(cmd, shell=True)
+
+    try:
+        for pdev in glob.glob(dev + 'p*'):
+            subprocess.check_call('mount {dev} {mdir}'.format(dev=dev, mdir=mdir))
+            if os.path.exists(os.path.isdir(mdir, 'etc')):
+                break
+            subprocess.check_call("umount " + pdev)
+
+        if not os.path.exists(os.path.isdir(mdir, 'etc')):
+            raise CloudError("Can't found root partition in file " + image)
+
+        try:
+            yield LocalGuestFS(mdir)
+        finally:
+            subprocess.call('umount ' + pdev)
+    finally:
+        subprocess.check_call("qemu-nbd -d " + dev, shell=True)
 
 
 # eth_devs => {'eth0' : (hw, ip/'dhcp', sz/None, gw/None)}
 # passwords => {login:passwd}
 def prepare_guest_debian(disk_path, hostname, passwords, eth_devs, format=None, apt_proxy_ip=None):
 
+    logger.info("Prepare image for " + hostname)
     if format == 'lxc':
         gfs = LocalGuestFS(disk_path)
     else:
         gfs = guestfs.GuestFS()
         gfs.add_drive_opts(disk_path, format=format)
+        logger.debug("Launch libguestfs vm")
         gfs.launch()
+        logger.debug("ok")
 
         #print gfs.list_partitions()
         for dev, fs_type in  gfs.list_filesystems():
+            logger.debug("Fount partition {0} with fs type {1}".format(dev, fs_type))
             if fs_type in 'ext2 ext3 reiserfs xfs jfs btrfs':
                 gfs.mount(dev, '/')
-                break
+                if gfs.exists('/etc'):
+                    logger.debug("Fount /etc on partition {0} - will work on it".format(dev))
+                    break
+                gfs.umount(dev)
+                logger.debug("No /etc dir found - continue")
 
+        if not gfs.exists('/etc'):
+            msg = "Can't fount /etc dir in image " + disk_path
+            logger.error(msg)
+            raise CloudError(msg)
+
+    logger.debug("Launch ok. Set hostname")
     #hostname
     gfs.write('/etc/hostname', hostname)
 
     #set device names
+    logger.debug("Set device names and network imterfaces")
     templ = 'SUBSYSTEM=="net", DRIVERS=="?*", ATTR{{address}}=="{hw}", NAME="{name}"'
     rules_fc = []
     interfaces = ["auto lo\niface lo inet loopback"]
@@ -168,6 +229,8 @@ def prepare_guest_debian(disk_path, hostname, passwords, eth_devs, format=None, 
     gfs.write('/etc/network/interfaces', "\n".join(interfaces))
 
     # update passwords
+    logger.debug("Update passwords")
+
     chars = "".join(chr(i) for i in range(ord('a'), ord('z') + 1))
     chars += "".join(chr(i) for i in range(ord('A'), ord('Z') + 1))
     chars += "".join(chr(i) for i in range(ord('0'), ord('9') + 1))
@@ -228,8 +291,20 @@ def prepare_guest_debian(disk_path, hostname, passwords, eth_devs, format=None, 
         gfs.write('/etc/passwd', passwd.rstrip() + "\n" + "\n".join(add_lines))
 
     if apt_proxy_ip is not None:
+        logger.debug("Set apt-proxy to http://{0}:3142".format(apt_proxy_ip))
         fc = 'Acquire::http {{ Proxy "http://{0}:3142"; }};'.format(apt_proxy_ip)
         gfs.write('/etc/apt/apt.conf.d/02proxy', fc)
+
+    logger.debug("Update hosts")
+
+    hosts = gfs.read_file('/etc/hosts')
+
+    new_hosts = ["127.0.0.1 localhost\n127.0.0.1 " + hostname]
+    for ln in hosts.split('#'):
+        if not ln.strip().startswith('127.0.0.1'):
+            new_hosts.append(ln)
+
+    gfs.write('/etc/hosts', "\n".join(new_hosts))
 
     #for fname in ('/etc/hostname', '/etc/passwd', '/etc/shadow', '/etc/network/interfaces', '/etc/apt/apt.conf.d/02proxy', '/etc/udev/rules.d/70-persistent-net.rules'):
     #    print '-' * 50

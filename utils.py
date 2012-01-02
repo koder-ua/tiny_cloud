@@ -1,6 +1,20 @@
 import re
+import logging
+
 
 cred_rr = r"(?P<login>.*?):(?P<passwd>.*)@(?P<host>[^+]*)(?P<port>\+\d+)?"
+
+
+logger = logging.getLogger('tiny_cloud')
+logger.setLevel(logging.ERROR)
+
+logger_handler = logging.StreamHandler()
+logger_handler.setLevel(logging.ERROR)
+
+formatter = logging.Formatter('%(asctime)s - %(name)s - %(levelname)s - %(message)s')
+logger_handler.setFormatter(formatter)
+
+logger.addHandler(logger_handler)
 
 
 def parse_credentials(credentials):

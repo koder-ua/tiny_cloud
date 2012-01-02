@@ -24,9 +24,11 @@ import libvirt
 
 import xmlbuilder
 
-from network import login_ssh, get_vm_ips, get_vm_ssh_ip
-from utils import ip2int, int2ip, netsz2netmask
+from network import login_ssh, get_vm_ips, get_vm_ssh_ip, ifconfig, get_network_bridge
+from utils import ip2int, int2ip, netsz2netmask, netmask2netsz, logger
 from common import CloudError
+from disk_image import prepare_guest
+
 
 #suppress libvirt error messages to console
 libvirt.registerErrorHandler(lambda x, y: 1, None)
@@ -38,7 +40,7 @@ class VM(object):
     class NetParams(object):
         mac_re = re.compile(r"\d\d:\d\d:\d\d:\d\d:\d\d:\d\d")
         ip_re = re.compile(r"\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}")
-        network_re = re.compile(r"\w[-\d\w_]+")
+        network_re = re.compile(r"[a-zA-Z_][-\w_]*")
 
     def __init__(self, name, **keys):
         self.name = name
@@ -100,6 +102,7 @@ class TinyCloud(object):
         self.vms = {}
         self.add_vms(vms)
         self.networks = [Network(name, **data) for name, data in networks.items()]
+        logger.debug("Cloud with {0} vm templates created".format(self.vms.keys()))
 
     DOM_SEPARATOR = '.'
 
@@ -116,19 +119,30 @@ class TinyCloud(object):
     def __iter__(self):
         return iter(self.vms)
 
+    def get_vm_ssh_ip(self, vmname):
+        return get_vm_ssh_ip(self.conn, vmname)
+
     def get_vm_ips(self, vmname):
         return get_vm_ips(self.conn, vmname)
 
     def start_net(self, name):
+        logger.info("Start network " + name)
         try:
             net = self.conn.networkLookupByName(name)
             if not net.isActive():
+                logger.debug("Network registered in libvirt - start it")
                 net.create()
+            else:
+                logger.debug("Network already active")
+
         except libvirt.libvirtError:
             try:
+                logger.debug("No such network in libvirt")
                 net = self.networks[name]
             except KeyError:
-                raise CloudError("Can't found network {0!r}".format(name))
+                msg = "Can't found network {0!r}".format(name)
+                logger.error(msg)
+                raise CloudError(msg)
 
             xml = xmlbuilder.XMLBuilder('network')
             xml.name(name)
@@ -136,18 +150,23 @@ class TinyCloud(object):
             with xml.ip(address=net.ip, netmask=net.netmask):
                 xml.dhcp.range(start=net.ip1, end=net.ip2)
 
+            logger.debug("Create network")
             self.conn.networkCreateXML(str(xml))
 
-    def start_vm(self, template, vmname):
+    def start_vm(self, template, vmname, users):
+        logger.info("Start vm/network {0} from template {1} with credentials {2}".format(vmname, template, users))
+
         vm_xml_templ = open(template).read()
 
         vms = [vm for vm in self.vms.values()
                 if vm.name == vmname or
                     vm.name.startswith(vmname +
                                         self.DOM_SEPARATOR)]
+        vm_names = " ".join(vm.name for vm in vms)
+        logger.debug("Found next vm's, which match name glob {0}".format(vm_names))
 
         for vm in vms:
-
+            logger.debug("Prepare vm {0}".format(vm.name))
             vm_xm = fromstring(vm_xml_templ)
 
             el = Element('vcpu')
@@ -171,27 +190,54 @@ class TinyCloud(object):
 
             devs.append(~hdd)
 
+            eths = {}
+
             for eth in vm.eths():
                 edev = xmlbuilder.XMLBuilder('interface', type='network')
                 edev.source(network=eth['network'])
                 edev.mac(address=eth['mac'])
-
                 devs.append(~edev)
 
+                if 'ip' not in eth:
+                    eths[eth['name']] = (eth['mac'], 'dhcp', None, None)
+                else:
+                    brdev = get_network_bridge(self.conn, eth['network'])
+                    addr = ifconfig.getAddr(brdev)
+                    mask = ifconfig.getMask(brdev)
+                    eths[eth['name']] = (eth['mac'], eth['ip'], netmask2netsz(mask), addr)
+
+            if users is None:
+                users = {vm.user: vm.passwd}
+
+            try:
+                prepare_guest(vm.image, vm.name, users, eths)
+            except CloudError as x:
+                print "Can't update vm image -", x
+
+            logger.debug("Image ready - start vm {0}".format(vm.name))
             self.conn.createXML(tostring(vm_xm), 0)
+            logger.debug("VM {0} started ok".format(vm.name))
 
     def stop_vm(self, vmname, timeout1=10, timeout2=2):
+
+        logger.info("Stop vm/network {0}".format(vmname))
 
         vms = [vm for vm in self.vms.values()
                 if vm.name == vmname or
                         vm.name.startswith(vmname +
                                            self.DOM_SEPARATOR)]
+
+        vm_names = " ".join(vm.name for vm in vms)
+        logger.debug("Found next vm's, which match name glob {0}".format(vm_names))
+
         for xvm in vms:
+            logger.debug("Stop vm {0}".format(xvm.name))
             try:
                 vm = self.conn.lookupByName(xvm.name)
             except libvirt.libvirtError:
-                pass
+                logger.debug("vm {0} don't exists - skip it".format(xvm.name))
             else:
+                logger.debug("Shutdown vm {0}".format(xvm.name))
                 vm.shutdown()
 
                 for i in range(timeout1):
@@ -201,6 +247,7 @@ class TinyCloud(object):
                     except libvirt.libvirtError:
                         return
 
+                logger.warning("VM {0} don't shoutdowned - destroy it".format(xvm.name))
                 vm.destroy()
                 for i in range(timeout2):
                     time.sleep(1)
@@ -209,16 +256,20 @@ class TinyCloud(object):
                     except libvirt.libvirtError:
                         return
 
-                raise RuntimeError("Can't stop vm")
+                logger.error("Can't stop vm {0}".format(xvm.name))
+                raise CloudError("Can't stop vm {0}".format(xvm.name))
 
     def list_vms(self):
         for domain_id in self.conn.listDomainsID():
             yield self.conn.lookupByID(domain_id)
 
-    def login_to_vm(self, name):
+    def login_to_vm(self, name, users=None):
         vm = self.vms[name]
         ipaddr = get_vm_ssh_ip(self.conn, name)
         if ipaddr is None:
             raise RuntimeError("No one interface of {0} accepts ssh connection".format(name))
         else:
-            login_ssh(ipaddr, vm.user, vm.passwd)
+            if users is not None:
+                login_ssh(ipaddr, users.keys()[0], users.values()[0])
+            else:
+                login_ssh(ipaddr, vm.user, vm.passwd)

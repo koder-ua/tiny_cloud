@@ -94,15 +94,3 @@ def test_ping():
         ip = ifconfig.getAddr(iname)
         ok(ping(ip, 0.1)) <= 0.1
         ok(is_host_alive(ip, 0.1)) == True
-
-
-
-
-
-
-
-
-
-
-
-

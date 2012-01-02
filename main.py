@@ -19,15 +19,18 @@
 """command line support module for tiny cloud library"""
 
 import sys
-import socket
+import time
 import errno
+import socket
+import logging
 
 import yaml
 
-from easy_opt import YamlConfigOptParser, Opt, ExistingFileName
+from easy_opt import YamlConfigOptParser, Opt, ExistingFileName, DictOpt, IntOpt
 
 from common import CloudError
 from vm import TinyCloud
+from utils import logger, logger_handler
 
 
 class CloudOpts(YamlConfigOptParser):
@@ -36,17 +39,17 @@ class CloudOpts(YamlConfigOptParser):
     def_config_fname = 'cloud.yaml'
 
     cmd = Opt(nodash=True,
-              choices=('start', 'stop', 'list', 'login', 'vms'),
+              choices=('start', 'stop', 'list', 'login', 'vms', 'wait_ip', 'wait_ssh'),
               help="Commands: start - start vm or set; " + \
                          " stop - stop vm or set; " + \
                          " list - list running vms with ip adresses; " + \
                          " login - login to vm; " + \
                          " vms - list all available vms")
 
+    wait_time = IntOpt(default=10, help="timeout to wait till vm gets ip/ssh", metavar="TIME")
+
     vmnames = Opt(nodash=True, nargs='*', help="vm names", metavar="VMNAME")
     storage = Opt('-s', help="directory for temporary files", metavar="STORAGE")
-
-    storage = Opt('-s', metavar="STORAGE", help="place for temporary files")
 
     uri = Opt('-u', metavar="URI", help="libvirt connection uri")
 
@@ -58,17 +61,22 @@ class CloudOpts(YamlConfigOptParser):
     config = ExistingFileName('-c', default="cloud.yaml",
                     help="Yaml file with vm descriptions", metavar="YAML_VMS_FILE")
 
+    users = DictOpt('-p', help="Credentials - uname:passwd[,uname:passwd[,...]]")
+    log_level = Opt(help="Set log level", metavar='LOGLEVEL', default='ERROR')
+
 
 def main(argv=None):
     argv = argv if argv is not None else sys.argv[1:]
 
     opts = CloudOpts.parse_opts(argv)
 
-    print opts
+    #print opts
+    #return 0
 
-    return 0
+    logger.setLevel(getattr(logging, opts.log_level))
+    logger_handler.setLevel(getattr(logging, opts.log_level))
 
-    cloud = yaml.load(open(opts.cloudconfig).read())
+    cloud = yaml.load(open(opts.config).read())
     raw_vms = cloud['vms']
     nets = cloud['networks']
 
@@ -77,17 +85,17 @@ def main(argv=None):
             cloud = TinyCloud(raw_vms, {}, None)
             print "\n".join(sorted(cloud))
         else:
-            cloud = TinyCloud(raw_vms, nets, opts.url)
+            cloud = TinyCloud(raw_vms, nets, opts.uri)
 
             if opts.cmd == 'start':
                 for name in opts.vmnames:
-                    cloud.start_vm(opts.template, name)
+                    cloud.start_vm(opts.template, name, opts.users)
             elif opts.cmd == 'stop':
                 for name in opts.vmnames:
-                    cloud.stop_vm(name)
+                    cloud.stop_vm(name, timeout1=opts.wait_time)
             elif opts.cmd == 'login':
                 assert len(opts.vmnames) == 1
-                cloud.login_to_vm(opts.vmnames[0])
+                cloud.login_to_vm(opts.vmnames[0], opts.users)
             elif opts.cmd == 'list':
                 for domain in cloud.list_vms():
                     try:
@@ -97,6 +105,50 @@ def main(argv=None):
                             raise
                         all_ips = "Not enought permissions for arp-scan"
                     print "{0:>5} {1:<15} => {2}".format(domain.ID(), domain.name(), all_ips)
+            elif opts.cmd == 'wait_ip':
+                tend = time.time() + opts.wait_time
+                for vmname in opts.vmnames:
+                    while True:
+                        try:
+                            ips = list(cloud.get_vm_ips(vmname))
+                        except socket.error as err:
+                            if err.errno != errno.EPERM:
+                                raise
+                            print "Not enought permissions for arp-scan"
+                            return 1
+
+                        if len(ips) != 0:
+                            print "{0:<15} => {1}".format(vmname, " ".join(ips))
+                            break
+
+                        if time.time() >= tend:
+                            print "VM {0} don't get ip in time".format(vmname)
+                            return 1
+
+                        time.sleep(0.01)
+
+            elif opts.cmd == 'wait_ssh':
+                tend = time.time() + opts.wait_time
+                for vmname in opts.vmnames:
+                    while True:
+                        try:
+                            ip = cloud.get_vm_ssh_ip(vmname)
+                        except socket.error as err:
+                            if err.errno != errno.EPERM:
+                                raise
+                            print "Not enought permissions for arp-scan"
+                            return 1
+
+                        if ip is not None:
+                            print "{0:<15} => {1}".format(vmname, ip)
+                            break
+
+                        if time.time() >= tend:
+                            print "VM {0} don't start ssh server in time".format(vmname)
+                            return 1
+
+                        time.sleep(0.01)
+
             else:
                 print >>sys.stderr, "Error : Unknown cmd {0}".format(opts.cmd)
                 CloudOpts.print_help()

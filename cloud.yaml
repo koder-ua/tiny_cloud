@@ -1,7 +1,6 @@
 storage: /tmp/vms
 uri: qemu:///system
 template: vm.xml
-
 #------------------------------------------------------------------------------
 vms:
     ubuntu:
@@ -12,6 +11,11 @@ vms:
     debian :
         eth0 : 00:44:01:61:78:01
         image : /home/koder/vm_images/debian_squeeze_amd64_standard.qcow2
+
+    debian-stat :
+        eth0 : 00:44:01:61:78:01, 192.168.122.10
+        image : /home/koder/vm_images/debian_squeeze_amd64_standard.qcow2
+        credentials : root:ubuntu
 
     net:
         type : network
