@@ -1,5 +1,3 @@
-"""command line support module for tiny cloud library"""
-
 # Copyright (C) 2011-2012 Kostiantyn Danylov aka koder <koder.mail@gmail.com>
 #
 # This file is part of tiny_cloud library.
@@ -17,6 +15,8 @@
 # You should have received a copy of the GNU Lesser General Public License
 # along with tiny_cloud; if not, write to the Free Software Foundation, Inc.,
 # 59 Temple Place, Suite 330, Boston, MA 02111-1307 USA.
+
+"""command line support module for tiny cloud library"""
 
 import sys
 import socket
