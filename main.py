@@ -21,47 +21,56 @@
 import sys
 import socket
 import errno
-import argparse
 
 import yaml
+
+from easy_opt import YamlConfigOptParser, Opt, ExistingFileName
 
 from common import CloudError
 from vm import TinyCloud
 
 
-def build_parser():
-    parser = argparse.ArgumentParser(description="Tool to manange small sets of vm's using libvirt")
+class CloudOpts(YamlConfigOptParser):
+    "Tool to manange small sets of vm's using libvirt"
 
-    parser.add_argument('cmd',
-                        choices=('start', 'stop', 'list', 'login', 'vms'),
-                        help="Commands: start - start vm or set; " + \
-                             " stop - stop vm or set; " + \
-                             " list - list running vms with ip adresses; " + \
-                             " login - login to vm; " + \
-                             " vms - list all available vms")
-    parser.add_argument('-n', '--name', help="vm name", metavar="VMNAME")
-    parser.add_argument('-u', '--url', default="qemu:///system",
-                        metavar="URL", help="libvirt connection url")
-    parser.add_argument('-t', '--template', default="vm.xml",
-                        help="XML file with vm template in libvirt format. " + \
-                        "Without hdd, name, vcpu, memory and eth devs",
-                        metavar="XML_FILE")
-    parser.add_argument('-v', '--vms', default="vms.yaml",
-                        help="Yaml file with vm descriptions", metavar="YAML_VMS_FILE")
-    parser.add_argument('-e', '--networks', default="networks.yaml",
-                        help="Yaml file with netwokrs descriptions", metavar="YAML_NET_FILE")
+    def_config_fname = 'cloud.yaml'
 
-    return parser
+    cmd = Opt(nodash=True,
+              choices=('start', 'stop', 'list', 'login', 'vms'),
+              help="Commands: start - start vm or set; " + \
+                         " stop - stop vm or set; " + \
+                         " list - list running vms with ip adresses; " + \
+                         " login - login to vm; " + \
+                         " vms - list all available vms")
+
+    vmnames = Opt(nodash=True, nargs='*', help="vm names", metavar="VMNAME")
+    storage = Opt('-s', help="directory for temporary files", metavar="STORAGE")
+
+    storage = Opt('-s', metavar="STORAGE", help="place for temporary files")
+
+    uri = Opt('-u', metavar="URI", help="libvirt connection uri")
+
+    template = ExistingFileName('-t',
+                    help="XML file with vm template in libvirt format. " + \
+                    "Without hdd, name, vcpu, memory and eth devs",
+                    metavar="XML_FILE")
+
+    config = ExistingFileName('-c', default="cloud.yaml",
+                    help="Yaml file with vm descriptions", metavar="YAML_VMS_FILE")
 
 
 def main(argv=None):
     argv = argv if argv is not None else sys.argv[1:]
 
-    parser = build_parser()
-    opts = parser.parse_args(argv)
+    opts = CloudOpts.parse_opts(argv)
 
-    raw_vms = yaml.load(open(opts.vms).read())
-    nets = yaml.load(open(opts.networks).read())
+    print opts
+
+    return 0
+
+    cloud = yaml.load(open(opts.cloudconfig).read())
+    raw_vms = cloud['vms']
+    nets = cloud['networks']
 
     try:
         if opts.cmd == 'vms':
@@ -71,11 +80,14 @@ def main(argv=None):
             cloud = TinyCloud(raw_vms, nets, opts.url)
 
             if opts.cmd == 'start':
-                cloud.start_vm(opts.template, opts.name)
+                for name in opts.vmnames:
+                    cloud.start_vm(opts.template, name)
             elif opts.cmd == 'stop':
-                cloud.stop_vm(opts.name)
+                for name in opts.vmnames:
+                    cloud.stop_vm(name)
             elif opts.cmd == 'login':
-                cloud.login_to_vm(opts.name)
+                assert len(opts.vmnames) == 1
+                cloud.login_to_vm(opts.vmnames[0])
             elif opts.cmd == 'list':
                 for domain in cloud.list_vms():
                     try:
@@ -87,7 +99,7 @@ def main(argv=None):
                     print "{0:>5} {1:<15} => {2}".format(domain.ID(), domain.name(), all_ips)
             else:
                 print >>sys.stderr, "Error : Unknown cmd {0}".format(opts.cmd)
-                parser.print_help()
+                CloudOpts.print_help()
     except CloudError as err:
         print >>sys.stderr, err
         return 1

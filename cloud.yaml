@@ -1,0 +1,36 @@
+storage: /tmp/vms
+uri: qemu:///system
+template: vm.xml
+
+#------------------------------------------------------------------------------
+vms:
+    ubuntu:
+        eth0 : 00:44:01:61:78:01
+        image : /home/koder/vm_images/ubuntu-server-nova-1.qcow2
+        credentials : ubuntu:ubuntu
+
+    debian :
+        eth0 : 00:44:01:61:78:01
+        image : /home/koder/vm_images/debian_squeeze_amd64_standard.qcow2
+
+    net:
+        type : network
+        deb1:
+            mem : 256
+            eth0 : 00:44:01:61:78:02
+            eth1 : 00:44:01:61:78:05, local_net
+            image : /home/koder/vm_images/deb1.qcow2
+        deb2:
+            mem : 256
+            eth0 : 00:44:01:61:78:03, local_net
+            image : /home/koder/vm_images/deb2.qcow2
+        deb3:
+            mem : 256
+            eth0 : 00:44:01:61:78:04, local_net
+            image : /home/koder/vm_images/deb3.qcow2
+
+#------------------------------------------------------------------------------
+networks:
+    local_net:
+        range : 192.168.152.2 - 192.168.152.254 / 24
+        bridge : virbr2
