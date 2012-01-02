@@ -1,0 +1,31 @@
+<?xml version="1.0" encoding="utf-8" ?>
+<domain type="kvm">
+    <uuid />
+    <os>
+        <type>hvm</type>
+        <boot dev="hd" />
+        <boot dev="cdrom" />
+        <bootmenu enable="yes" />
+        <bios useserial="yes" />
+    </os>
+    <clock sync="localtime" />
+    <on_poweroff>destroy</on_poweroff>
+    <on_reboot>restart</on_reboot>
+    <on_crash>destroy</on_crash>
+    <features>
+        <acpi />
+        <hap />
+        <apic />
+    </features>
+    <devices>
+        <emulator>/usr/bin/kvm</emulator>
+        <serial type="pty">
+            <target port="0" />
+        </serial>
+        <console type="pty">
+            <target port="0" />
+        </console>
+        <input bus="ps2" type="mouse" />
+        <graphics autoport="yes" keymap="en-us" port="-1" type="vnc" />
+    </devices>
+</domain>	
