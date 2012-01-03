@@ -150,7 +150,17 @@ def prepare_guest(*dt, **mp):
 
 
 @contextlib.contextmanager
-def mount_dimage(image, mdir, dev='/dev/nbd0'):
+def mount_dimage(image, mdir):
+
+    for dev in glob.glob('/dev/nbd*'):
+        if not os.path.exists('/sys/block/{dev}/pid'.format(dev.split('/')[-1])):
+            break
+
+    if os.path.exists('/sys/block/{dev}/pid'.format(dev.split('/')[-1])):
+        msg = "Can't found free nbd device"
+        logger.error(msg)
+        raise CloudError(msg)
+
     cmd = "qemu-nbd -c {dev} {img}".format(dev=dev, image=image)
     subprocess.check_call(cmd, shell=True)
 
@@ -189,7 +199,9 @@ def prepare_guest_debian(disk_path, hostname, passwords, eth_devs, format=None, 
         #print gfs.list_partitions()
         for dev, fs_type in  gfs.list_filesystems():
             logger.debug("Fount partition {0} with fs type {1}".format(dev, fs_type))
-            if fs_type in 'ext2 ext3 reiserfs xfs jfs btrfs':
+
+            # TODO: add lvm support
+            if fs_type in 'ext2 ext3 reiserfs3 reiserfs4 xfs jfs btrfs':
                 gfs.mount(dev, '/')
                 if gfs.exists('/etc'):
                     logger.debug("Fount /etc on partition {0} - will work on it".format(dev))
