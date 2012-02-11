@@ -135,6 +135,11 @@ class LocalGuestFS(object):
     def exists(self, path):
         return os.path.exists(self.path(path))
 
+    def rm(self, path):
+        path = self.path(path)
+        if os.path.exists(path):
+            return os.unlink(path)
+
     def mkdir_p(self, path):
         cp = self.root
         path_els = path.split(path[1:], '/')
@@ -181,14 +186,34 @@ def mount_dimage(image, mdir):
     finally:
         subprocess.check_call("qemu-nbd -d " + dev, shell=True)
 
+ifconfig_script = \
+"""
+description     "startup ifconfig"
+start on filesystem or runlevel [2345]
+
+pre-start script
+    {0}
+end script
+exec ps
+"""
 
 # eth_devs => {'eth0' : (hw, ip/'dhcp', sz/None, gw/None)}
 # passwords => {login:passwd}
+
 def prepare_guest_debian(disk_path, hostname, passwords, eth_devs, format=None, apt_proxy_ip=None):
 
     logger.info("Prepare image for " + hostname)
     if format == 'lxc':
         gfs = LocalGuestFS(disk_path)
+        gfs.rm('/etc/init/udev.conf')
+
+        interfaces = []
+        for dev, (hw, ip, sz, gw) in eth_devs.items():
+            if ip == 'dhcp':
+                interfaces.append("dhclient {0}".format(dev))
+            else:
+                interfaces.append("ifconfig {0} {1}/{2} up".format(dev, ip, sz))
+        gfs.write('/etc/init/lxc_lan.conf', ifconfig_script.format("\n".join(interfaces)))
     else:
         gfs = guestfs.GuestFS()
         gfs.add_drive_opts(disk_path, format=format)
@@ -196,23 +221,41 @@ def prepare_guest_debian(disk_path, hostname, passwords, eth_devs, format=None, 
         gfs.launch()
         logger.debug("ok")
 
-        #print gfs.list_partitions()
-        for dev, fs_type in  gfs.list_filesystems():
-            logger.debug("Fount partition {0} with fs type {1}".format(dev, fs_type))
-
-            # TODO: add lvm support
-            if fs_type in 'ext2 ext3 reiserfs3 reiserfs4 xfs jfs btrfs':
-                gfs.mount(dev, '/')
-                if gfs.exists('/etc'):
-                    logger.debug("Fount /etc on partition {0} - will work on it".format(dev))
-                    break
-                gfs.umount(dev)
-                logger.debug("No /etc dir found - continue")
-
-        if not gfs.exists('/etc'):
-            msg = "Can't fount /etc dir in image " + disk_path
+        os_devs = gfs.inspect_os()
+        if len(os_devs) > 1:
+            msg = "Two or more bootable partitions - disk prepare impossible " + disk_path
             logger.error(msg)
             raise CloudError(msg)
+
+        # for dev, fs_type in  gfs.list_filesystems():
+        #     logger.debug("Fount partition {0} with fs type {1}".format(dev, fs_type)
+
+        #     # TODO: add lvm support
+        #     if fs_type in 'ext2 ext3 reiserfs3 reiserfs4 xfs jfs btrfs':
+        #         gfs.mount(dev, '/')
+        #         if gfs.exists('/etc'):
+        #             logger.debug("Fount /etc on partition {0} - will work on it".format(dev))
+        #             break
+        #         gfs.umount(dev)
+        #         logger.debug("No /etc dir found - continue")
+        
+        if 0 == len(os_devs):
+            mounts = sorted(gfs.inspect_get_mountpoints(os_devs[0]))
+
+            for mpoint, dev in mounts:
+                gfs.mount(dev, mpoint)
+
+                if not gfs.exists('/etc'):
+                    msg = "Can't fount /etc dir in image " + disk_path
+                    logger.error(msg)
+                    raise CloudError(msg)
+        else:
+            gfs.mount('/dev/vda1', '/')
+
+            if not gfs.exists('/etc'):
+                msg = "Can't fount /etc dir in image " + disk_path
+                logger.error(msg)
+                raise CloudError(msg)
 
     logger.debug("Launch ok. Set hostname")
     #hostname
@@ -318,13 +361,3 @@ def prepare_guest_debian(disk_path, hostname, passwords, eth_devs, format=None, 
 
     gfs.write('/etc/hosts', "\n".join(new_hosts))
 
-    #for fname in ('/etc/hostname', '/etc/passwd', '/etc/shadow', '/etc/network/interfaces', '/etc/apt/apt.conf.d/02proxy', '/etc/udev/rules.d/70-persistent-net.rules'):
-    #    print '-' * 50
-    #    print fname, "=>"
-    #    print gfs.read_file(fname)
-
-#src = '/home/koder/vm_images/debian_squeeze_amd64_standard.qcow2'
-#with make_image(src, '/tmp', 'qcow2_on_qcow2') as fname:
-#    prepare_guest(fname, 'deb_test', {'root': 'www', 'koder': 'mmm'}, {'eth0': ('00:00:00:00:00:00', '1.2.3.4', 24, '1.2.3.1'),
-#                                                       'eth1': ('00:00:00:00:00:01', 'dhcp', None, None)},
-#                        format='qcow2', apt_proxy_ip='1.2.3.1')

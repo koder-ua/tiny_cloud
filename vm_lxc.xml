@@ -1,0 +1,15 @@
+<?xml version="1.0" encoding="utf-8" ?>
+<domain type="lxc">
+    <os>
+        <type>exe</type>
+        <init>/sbin/init</init>
+    </os>
+    <clock offset="utc"/>
+    <on_poweroff>destroy</on_poweroff>
+    <on_reboot>restart</on_reboot>
+    <on_crash>destroy</on_crash>
+    <devices>
+        <emulator>/usr/lib/libvirt/libvirt_lxc</emulator>
+    <console type="pty" />
+  </devices>
+</domain>

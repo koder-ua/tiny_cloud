@@ -22,6 +22,7 @@ import sys
 import time
 import errno
 import socket
+import os.path
 import logging
 
 import yaml
@@ -51,19 +52,23 @@ class CloudOpts(YamlConfigOptParser):
     vmnames = Opt(nodash=True, nargs='*', help="vm names", metavar="VMNAME")
     storage = Opt('-s', help="directory for temporary files", metavar="STORAGE")
 
-    uri = Opt('-u', metavar="URI", help="libvirt connection uri")
-
-    template = ExistingFileName('-t',
-                    help="XML file with vm template in libvirt format. " + \
-                    "Without hdd, name, vcpu, memory and eth devs",
-                    metavar="XML_FILE")
-
     config = ExistingFileName('-c', default="cloud.yaml",
                     help="Yaml file with vm descriptions", metavar="YAML_VMS_FILE")
 
     users = DictOpt('-p', help="Credentials - uname:passwd[,uname:passwd[,...]]")
     log_level = Opt(help="Set log level", metavar='LOGLEVEL', default='ERROR')
 
+def get_default_config(cfg_fname=None):
+    if cfg_fname is None:
+        cfg_fname = os.path.join(os.path.dirname(__file__), 'cloud.yaml')
+    return yaml.load(open(cfg_fname).read())
+
+def cloud_connect(cfg_fname=None):
+    cloud_cfg = get_default_config(cfg_fname)
+    return TinyCloud(vms=cloud_cfg['vms'], 
+                     templates=cloud_cfg['templates'], 
+                     networks=cloud_cfg['networks'], 
+                     urls=cloud_cfg['urls'])
 
 def main(argv=None):
     argv = argv if argv is not None else sys.argv[1:]
@@ -76,20 +81,14 @@ def main(argv=None):
     logger.setLevel(getattr(logging, opts.log_level))
     logger_handler.setLevel(getattr(logging, opts.log_level))
 
-    cloud = yaml.load(open(opts.config).read())
-    raw_vms = cloud['vms']
-    nets = cloud['networks']
-
     try:
+        cloud = cloud_connect(opts.config)
         if opts.cmd == 'vms':
-            cloud = TinyCloud(raw_vms, {}, None)
             print "\n".join(sorted(cloud))
         else:
-            cloud = TinyCloud(raw_vms, nets, opts.uri)
-
             if opts.cmd == 'start':
                 for name in opts.vmnames:
-                    cloud.start_vm(opts.template, name, opts.users)
+                    cloud.start_vm(name, opts.users)
             elif opts.cmd == 'stop':
                 for name in opts.vmnames:
                     cloud.stop_vm(name, timeout1=opts.wait_time)
