@@ -1,3 +1,4 @@
+#!/usr/bin/env python
 # Copyright (C) 2011-2012 Kostiantyn Danylov aka koder <koder.mail@gmail.com>
 #
 # This file is part of tiny_cloud library.
@@ -24,62 +25,57 @@ import errno
 import socket
 import os.path
 import logging
+import argparse
 
 import yaml
 
-from easy_opt import YamlConfigOptParser, Opt, ExistingFileName, DictOpt, IntOpt
-
-from common import CloudError
 from vm import TinyCloud
+from common import CloudError
 from utils import logger, logger_handler
 
-
-class CloudOpts(YamlConfigOptParser):
-    "Tool to manange small sets of vm's using libvirt"
-
-    def_config_fname = 'cloud.yaml'
-
-    cmd = Opt(nodash=True,
-              choices=('start', 'stop', 'list', 'login', 'vms', 'wait_ip', 'wait_ssh'),
-              help="Commands: start - start vm or set; " + \
-                         " stop - stop vm or set; " + \
-                         " list - list running vms with ip adresses; " + \
-                         " login - login to vm; " + \
-                         " vms - list all available vms")
-
-    wait_time = IntOpt(default=10, help="timeout to wait till vm gets ip/ssh", metavar="TIME")
-
-    vmnames = Opt(nodash=True, nargs='*', help="vm names", metavar="VMNAME")
-    storage = Opt('-s', help="directory for temporary files", metavar="STORAGE")
-
-    config = ExistingFileName('-c', default="cloud.yaml",
-                    help="Yaml file with vm descriptions", metavar="YAML_VMS_FILE")
-
-    users = DictOpt('-p', help="Credentials - uname:passwd[,uname:passwd[,...]]")
-    log_level = Opt(help="Set log level", metavar='LOGLEVEL', default='ERROR')
 
 def get_default_config(cfg_fname=None):
     if cfg_fname is None:
         cfg_fname = os.path.join(os.path.dirname(__file__), 'cloud.yaml')
-    return yaml.load(open(cfg_fname).read())
+
+        if not os.path.isfile(cfg_fname):
+            cfg_fname = os.path.expanduser("~/.tcloud/cloud.yaml")
+
+    with open(cfg_fname) as fd:
+        cfg = yaml.load(fd.read())
+
+    cfg['cfg_folder'] = os.path.dirname(cfg_fname)
+
+    return cfg
+
 
 def cloud_connect(cfg_fname=None):
     cloud_cfg = get_default_config(cfg_fname)
-    return TinyCloud(vms=cloud_cfg['vms'], 
-                     templates=cloud_cfg['templates'], 
-                     networks=cloud_cfg['networks'], 
-                     urls=cloud_cfg['urls'])
+    return TinyCloud(vms=cloud_cfg['vms'],
+                     templates=cloud_cfg['templates'],
+                     networks=cloud_cfg['networks'],
+                     urls=cloud_cfg['urls'],
+                     root=cloud_cfg['cfg_folder'])
+
+
+def create_parser():
+    parser = argparse.ArgumentParser()
+    parser.add_argument('-c', '--config', default=None)
+    parser.add_argument('-p', '--prepare', action="store_true", default=False)
+    parser.add_argument('-l', '--loglevel', default="ERROR")
+    parser.add_argument('-w', '--wait_time', default=30, type=int)
+    parser.add_argument('cmd', choices=['start', 'stop', 'list',
+                                        'login', 'vms', 'wait_ip', 'wait_ssh'])
+    parser.add_argument('vmnames', nargs='*')
+    return parser
+
 
 def main(argv=None):
-    argv = argv if argv is not None else sys.argv[1:]
+    opts = create_parser().parse_args(argv)
+    opts.users = None
 
-    opts = CloudOpts.parse_opts(argv)
-
-    #print opts
-    #return 0
-
-    logger.setLevel(getattr(logging, opts.log_level))
-    logger_handler.setLevel(getattr(logging, opts.log_level))
+    logger.setLevel(getattr(logging, opts.loglevel))
+    logger_handler.setLevel(getattr(logging, opts.loglevel))
 
     try:
         cloud = cloud_connect(opts.config)
@@ -88,7 +84,7 @@ def main(argv=None):
         else:
             if opts.cmd == 'start':
                 for name in opts.vmnames:
-                    cloud.start_vm(name, opts.users)
+                    cloud.start_vm(name, opts.users, opts.prepare)
             elif opts.cmd == 'stop':
                 for name in opts.vmnames:
                     cloud.stop_vm(name, timeout1=opts.wait_time)
@@ -103,7 +99,9 @@ def main(argv=None):
                         if err.errno != errno.EPERM:
                             raise
                         all_ips = "Not enought permissions for arp-scan"
-                    print "{0:>5} {1:<15} => {2}".format(domain.ID(), domain.name(), all_ips)
+                    print "{0:>5} {1:<15} => {2}".format(domain.ID(),
+                                                         domain.name(),
+                                                         all_ips)
             elif opts.cmd == 'wait_ip':
                 tend = time.time() + opts.wait_time
                 for vmname in opts.vmnames:
@@ -117,7 +115,8 @@ def main(argv=None):
                             return 1
 
                         if len(ips) != 0:
-                            print "{0:<15} => {1}".format(vmname, " ".join(ips))
+                            print "{0:<15} => {1}".format(vmname,
+                                                          " ".join(ips))
                             break
 
                         if time.time() >= tend:
@@ -143,18 +142,18 @@ def main(argv=None):
                             break
 
                         if time.time() >= tend:
-                            print "VM {0} don't start ssh server in time".format(vmname)
+                            templ = "VM {0} don't start ssh server in time"
+                            print templ.format(vmname)
                             return 1
 
                         time.sleep(0.01)
 
             else:
                 print >>sys.stderr, "Error : Unknown cmd {0}".format(opts.cmd)
-                CloudOpts.print_help()
     except CloudError as err:
         print >>sys.stderr, err
         return 1
     return 0
 
 if __name__ == "__main__":
-    sys.exit(main(sys.argv[1:]))
+    exit(main(sys.argv[1:]))

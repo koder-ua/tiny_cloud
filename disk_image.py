@@ -228,7 +228,7 @@ def prepare_guest_debian(disk_path, hostname, passwords, eth_devs, format=None, 
             raise CloudError(msg)
 
         # for dev, fs_type in  gfs.list_filesystems():
-        #     logger.debug("Fount partition {0} with fs type {1}".format(dev, fs_type)
+        #     logger.debug("Fount partition {0} with fs type {1}".format(dev, fs_type))
 
         #     # TODO: add lvm support
         #     if fs_type in 'ext2 ext3 reiserfs3 reiserfs4 xfs jfs btrfs':
@@ -238,7 +238,7 @@ def prepare_guest_debian(disk_path, hostname, passwords, eth_devs, format=None, 
         #             break
         #         gfs.umount(dev)
         #         logger.debug("No /etc dir found - continue")
-        
+
         if 0 == len(os_devs):
             mounts = sorted(gfs.inspect_get_mountpoints(os_devs[0]))
 
@@ -250,7 +250,8 @@ def prepare_guest_debian(disk_path, hostname, passwords, eth_devs, format=None, 
                     logger.error(msg)
                     raise CloudError(msg)
         else:
-            gfs.mount('/dev/vda1', '/')
+            gfs.mount(os_devs[0], '/')
+            #gfs.mount('/dev/vda1', '/')
 
             if not gfs.exists('/etc'):
                 msg = "Can't fount /etc dir in image " + disk_path
@@ -281,7 +282,8 @@ def prepare_guest_debian(disk_path, hostname, passwords, eth_devs, format=None, 
             interfaces.append("    netmask " + netsz2netmask(sz))
 
     gfs.write('/etc/udev/rules.d/70-persistent-net.rules', "\n".join(rules_fc))
-    gfs.write('/etc/network/interfaces', "\n".join(interfaces))
+    # gfs.write('/etc/network/interfaces', "\n".join(interfaces))
+    gfs.write('/etc/network/interfaces.d/eth0', "\n".join(interfaces))
 
     # update passwords
     logger.debug("Update passwords")
@@ -303,17 +305,21 @@ def prepare_guest_debian(disk_path, hostname, passwords, eth_devs, format=None, 
         if ln != '' and ln[0] != '#':
             login = ln.split(':', 1)[0]
             if login in hashes:
-                new_shadow.append("{login}:{hash}:{rest}".format(login=login,
-                                                                   hash=hashes[login],
-                                                                   rest=ln.split(':', 2)[2]))
+                sh_templ = "{login}:{hash}:{rest}"
+                sh_line = sh_templ.format(login=login,
+                                          hash=hashes[login],
+                                          rest=ln.split(':', 2)[2])
+                new_shadow.append(sh_line)
                 need_logins.remove(login)
         else:
             new_shadow.append(ln)
 
     for login in need_logins:
-        new_shadow.append("{login}:{hash}:{rest}".format(login=login,
-                                                         hash=hashes[login],
-                                                         rest="0:0:99999:7:::"))
+        new_sh_templ = "{login}:{hash}:{rest}"
+        new_sh_line = new_sh_templ.format(login=login,
+                                          hash=hashes[login],
+                                          rest="0:0:99999:7:::")
+        new_shadow.append(new_sh_line)
 
     gfs.write('/etc/shadow', "\n".join(new_shadow))
 
@@ -345,10 +351,10 @@ def prepare_guest_debian(disk_path, hostname, passwords, eth_devs, format=None, 
     if add_lines != []:
         gfs.write('/etc/passwd', passwd.rstrip() + "\n" + "\n".join(add_lines))
 
-    if apt_proxy_ip is not None:
-        logger.debug("Set apt-proxy to http://{0}:3142".format(apt_proxy_ip))
-        fc = 'Acquire::http {{ Proxy "http://{0}:3142"; }};'.format(apt_proxy_ip)
-        gfs.write('/etc/apt/apt.conf.d/02proxy', fc)
+    # if apt_proxy_ip is not None:
+    #     logger.debug("Set apt-proxy to http://{0}:3142".format(apt_proxy_ip))
+    #     fc = 'Acquire::http {{ Proxy "http://{0}:3142"; }};'.format(apt_proxy_ip)
+    #     gfs.write('/etc/apt/apt.conf.d/02proxy', fc)
 
     logger.debug("Update hosts")
 
@@ -360,4 +366,24 @@ def prepare_guest_debian(disk_path, hostname, passwords, eth_devs, format=None, 
             new_hosts.append(ln)
 
     gfs.write('/etc/hosts', "\n".join(new_hosts))
+
+    # allow ssh passwd auth
+    if gfs.is_file('/etc/ssh/ssh_config'):
+        name = '/etc/ssh/ssh_config'
+    elif gfs.is_file('/etc/ssh/sshd_config'):
+        name = '/etc/ssh/sshd_config'
+    else:
+        logger.warning("Both '/etc/ssh/sshd_config' and '/etc/ssh/ssh_config' are absent. Skip ssh config patching")
+        name = None
+
+    if name is not None:
+        sshd_conf = gfs.read_file('/etc/ssh/ssh_config')
+        sshd_conf_lines = sshd_conf.split("\n")
+        for pos, ln in enumerate(sshd_conf_lines):
+            if "PasswordAuthentication" in ln:
+                sshd_conf_lines[pos] = "PasswordAuthentication yes"
+                break
+        else:
+            sshd_conf_lines.append("PasswordAuthentication yes")
+        gfs.write('/etc/ssh/ssh_config', "\n".join(sshd_conf_lines))
 

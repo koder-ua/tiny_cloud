@@ -41,7 +41,7 @@ class VM(object):
     eth_re = re.compile(r"eth\d+")
 
     class NetParams(object):
-        mac_re = re.compile(':'.join([r"[\da-fA-F][\da-fA-F]"] * 6) )
+        mac_re = re.compile(':'.join([r"[\da-fA-F][\da-fA-F]"] * 6))
         ip_re = re.compile(r"\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}")
         network_re = re.compile(r"[a-zA-Z_][-\w_]*")
 
@@ -53,8 +53,10 @@ class VM(object):
 
         credentials = keys.pop('credentials', 'root:root')
         self.user, self.passwd = credentials.split(':')
-        self.image = keys.pop('image')
-        self.images = [self.image]
+        if 'image' in keys:
+            self.images = [keys.pop('image')]
+        else:
+            self.images = keys.pop('images')
         self.opts = [i.strip() for i in keys.pop('opts', "").split()]
 
         self.__dict__.update(keys)
@@ -103,14 +105,18 @@ class Network(object):
 
 class TinyCloud(object):
     def_connection = 'qemu:///system'
-    def __init__(self, vms, templates, networks, urls, **defaults):
+    def __init__(self, vms, templates, networks,
+                 urls, root, **defaults):
 
         self.urls = urls
         self.vms = {}
         self.templates = templates
         self.add_vms(vms)
-        self.networks = [Network(name, **data) for name, data in networks.items()]
-        logger.debug("Cloud with {0} vm templates created".format(self.vms.keys()))
+        self.root = root
+        self.networks = [Network(name, **data)
+                         for name, data in networks.items()]
+        msg = "Cloud with {0} vm templates created".format(self.vms.keys())
+        logger.debug(msg)
         self.defaults = defaults
 
     DOM_SEPARATOR = '.'
@@ -130,7 +136,7 @@ class TinyCloud(object):
 
     def __iter__(self):
         return iter(self.vms)
-    
+
     def get_vm_conn(self, vmname):
         return libvirt.open(self.urls[self.vms[vmname].htype])
 
@@ -142,7 +148,7 @@ class TinyCloud(object):
 
     def start_net(self, name):
         logger.info("Start network " + name)
-        
+
         if name in self.networks:
             conn = libvirt.open(self.urls[self.networks[name].htype])
         else:
@@ -174,7 +180,7 @@ class TinyCloud(object):
             logger.debug("Create network")
             conn.networkCreateXML(str(xml))
 
-    def start_vm(self, vmname, users):
+    def start_vm(self, vmname, users, prepare_image=False):
         logger.info("Start vm/network {0} with credentials {1}".format(vmname, users))
 
         vms = [vm for vm in self.vms.values()
@@ -187,8 +193,9 @@ class TinyCloud(object):
         for vm in vms:
             logger.debug("Prepare vm {0}".format(vm.name))
 
-            vm_xml_templ = open(self.templates[vm.htype]).read()
-            logger.info("Use template '{0}'".format(self.templates[vm.htype]))
+            path = os.path.join(self.root, self.templates[vm.htype])
+            vm_xml_templ = open(path).read()
+            logger.info("Use template '{0}'".format(path))
 
             vm_xm = fromstring(vm_xml_templ)
 
@@ -207,7 +214,7 @@ class TinyCloud(object):
             devs = vm_xm.find('devices')
 
             disk_emulator = self.defaults.get('disk_emulator', 'qemu')
-            
+
             if 'virtio' in vm.opts:
                 bus = 'virtio'
             else:
@@ -241,7 +248,7 @@ class TinyCloud(object):
                     hdd.source(dir=image)
                     hdd.target(dir='/')
                 else:
-                    res = subprocess.check_output(['qemu-img','info',image])
+                    res = subprocess.check_output(['qemu-img', 'info', image])
                     hdr = "file format: "
                     tp = None
                     for line in res.split('\n'):
@@ -257,7 +264,7 @@ class TinyCloud(object):
                     elif stat.S_ISREG(dev_st.st_mode):
                         hdd = xmlbuilder.XMLBuilder('disk', device='disk', type='file')
                         hdd.driver(name=disk_emulator, type=tp)
-                        hdd.source(file=vm.image)
+                        hdd.source(file=image)
                         hdd.target(bus=bus, dev=dev)
                     else:
                         raise CloudError("Can't connect hdd device {0!r}".format(image))
@@ -287,14 +294,14 @@ class TinyCloud(object):
 
             try:
                 if vm.htype == 'lxc':
-                    prepare_guest(vm.image, vm.name, users, eths, format='lxc')
-                else:
-                    prepare_guest(vm.image, vm.name, users, eths)
+                    prepare_guest(vm.images[0], vm.name, users, eths, format='lxc')
+                elif prepare_image:
+                    prepare_guest(vm.images[0], vm.name, users, eths)
             except CloudError as x:
                 print "Can't update vm image -", x
 
             logger.debug("Image ready - start vm {0}".format(vm.name))
-            
+
             conn.createXML(tostring(vm_xm), 0)
             logger.debug("VM {0} started ok".format(vm.name))
             conn.close()
@@ -305,8 +312,7 @@ class TinyCloud(object):
 
         vms = [vm for vm in self.vms.values()
                 if vm.name == vmname or
-                        vm.name.startswith(vmname +
-                                           self.DOM_SEPARATOR)]
+                   vm.name.startswith(vmname + self.DOM_SEPARATOR)]
 
         vm_names = " ".join(vm.name for vm in vms)
         logger.debug("Found next vm's, which match name glob {0}".format(vm_names))

@@ -239,7 +239,7 @@ def netscan(dev, method="auto", lease_file=None):
 
 def hw2ip(hw, dev, method="auto", lease_file=None):
     for fhw, ip in netscan(dev, method="auto", lease_file=None):
-        if fhw == hw:
+        if fhw.lower() == hw.lower():
             return ip
     raise RuntimeError("Can't found ip address for {0!r}".format(hw))
 

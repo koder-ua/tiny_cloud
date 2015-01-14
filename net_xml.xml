@@ -1,0 +1,15 @@
+<?xml version="1.0" ?>
+<network>
+  	<name>ceph</name>
+  	<bridge name="virbr2" />
+  	<forward mode="nat" />
+  	<ip address="192.168.152.1" netmask="255.255.255.0">
+      	<dhcp>
+    		<range start="192.168.152.10" end="192.168.152.100" />
+            <host mac="52:54:00:98:7F:EF" name="ceph-1" ip="192.168.152.37" />
+            <host mac="52:54:00:98:7F:F0" name="ceph-2" ip="192.168.152.38" />
+            <host mac="52:54:00:98:7F:F1" name="ceph-3" ip="192.168.152.39" />
+            <host mac="52:54:00:98:7F:F2" name="ceph-4" ip="192.168.152.40" />
+   		</dhcp>
+	</ip>
+</network>

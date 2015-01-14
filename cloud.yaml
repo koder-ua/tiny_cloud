@@ -8,20 +8,68 @@ templates:
     lxc: vm_lxc.xml
     kvm: vm_kvm.xml
 
-parameters_path: /etc/params.js
-#------------------------------------------------------------------------------
 vms:
-    devstack:
-        eth0: 00:44:01:61:78:01
-        image: /home/koder/vm_images/ubuntu-server-nova.qcow2
+    ceph-1:
+        eth0: 52:54:00:98:7F:EF, ceph
+        images: 
+            - /media/vms/tiny_cloud/ceph_1.img
+            - /media/vms/tiny_cloud/ceph_1_data.img
         credentials: ubuntu:ubuntu
         opts: virtio
 
-    nova:
-        eth0: 00:44:01:61:78:01
-        image: /home/koder/vm_images/ubuntu-server-nova-1.qcow2
+    ceph-2:
+        eth0: 52:54:00:98:7F:F0, ceph
+        images: 
+            - /media/vms/tiny_cloud/ceph_2.img
+            - /media/vms/tiny_cloud/ceph_2_data.img
         credentials: ubuntu:ubuntu
         opts: virtio
+
+    ceph-3:
+        eth0: 52:54:00:98:7F:F1, ceph
+        images: 
+            - /media/vms/tiny_cloud/ceph_3.img
+            - /media/vms/tiny_cloud/ceph_3_data.img
+        credentials: ubuntu:ubuntu
+        opts: virtio
+
+    ceph-4:
+        eth0: 52:54:00:98:7F:F2, ceph
+        images: 
+            - /media/vms/tiny_cloud/ceph_4.img
+            - /media/vms/tiny_cloud/ceph_4_data.img
+        credentials: ubuntu:ubuntu
+        opts: virtio
+
+    devstack:
+        eth0: 52:54:00:98:7F:F3
+        images: 
+            - /media/vms/tiny_cloud/openstack.img
+            - /media/vms/tiny_cloud/openstack-lvm.img
+        credentials: ubuntu:ubuntu
+        opts: virtio
+        mem: 4096
+        vcpu: 2
+
+    # ceph-2:
+    #     eth0: 00:44:01:61:78:01, ceph
+    #     images:
+    #         - /media/vms/tiny_cloud/ceph-2.img
+    #         - /media/vms/tiny_cloud/ceph-2-data.img
+    #     credentials: ubuntu:ubuntu
+    #     opts: virtio
+
+    # devstack:
+    #     eth0: 00:44:01:61:78:01
+    #     image: /home/koder/vm_images/ubuntu-server-nova.qcow2
+    #     credentials: ubuntu:ubuntu
+    #     opts: virtio
+
+    # nova:
+    #     eth0: 00:44:01:61:78:01
+    #     image: /home/koder/vm_images/ubuntu-server-nova-1.qcow2
+    #     credentials: ubuntu:ubuntu
+    #     opts: virtio
 
     #devstack:
     #    eth0: 00:44:01:61:78:a0
@@ -29,39 +77,39 @@ vms:
     #    credentials: ubuntu:ubuntu
     #    opts: virtio
 
-    debian:
-        eth0: 00:44:01:61:78:01
-        image: /home/koder/vm_images/debian_squeeze_amd64_standard.qcow2
+    # debian:
+    #     eth0: 00:44:01:61:78:01
+    #     image: /home/koder/vm_images/debian_squeeze_amd64_standard.qcow2
 
-    debian-stat:
-        eth0: 00:44:01:61:78:01, 192.168.122.10
-        image: /home/koder/vm_images/debian_squeeze_amd64_standard.qcow2
-        credentials: root:ubuntu
+    # debian-stat:
+    #     eth0: 00:44:01:61:78:01, 192.168.122.10
+    #     image: /home/koder/vm_images/debian_squeeze_amd64_standard.qcow2
+    #     credentials: root:ubuntu
 
-    lxc-test:
-        htype: lxc
-        eth0: 00:44:01:61:78:22, 192.168.122.190
-        image: /var/lib/lxc/test11/rootfs
-        credentials: root:root
+    # lxc-test:
+    #     htype: lxc
+    #     eth0: 00:44:01:61:78:22, 192.168.122.190
+    #     image: /var/lib/lxc/test11/rootfs
+    #     credentials: root:root
 
-    net:
-        type: network
-        deb1:
-            mem: 256
-            eth0: 00:44:01:61:78:02
-            eth1: 00:44:01:61:78:05, local_net
-            image: /home/koder/vm_images/deb1.qcow2
-        deb2:
-            mem: 256
-            eth0: 00:44:01:61:78:03, local_net
-            image: /home/koder/vm_images/deb2.qcow2
-        deb3:
-            mem: 256
-            eth0: 00:44:01:61:78:04, local_net
-            image: /home/koder/vm_images/deb3.qcow2
+    # net:
+    #     type: network
+    #     deb1:
+    #         mem: 256
+    #         eth0: 00:44:01:61:78:02
+    #         eth1: 00:44:01:61:78:05, local_net
+    #         image: /home/koder/vm_images/deb1.qcow2
+    #     deb2:
+    #         mem: 256
+    #         eth0: 00:44:01:61:78:03, local_net
+    #         image: /home/koder/vm_images/deb2.qcow2
+    #     deb3:
+    #         mem: 256
+    #         eth0: 00:44:01:61:78:04, local_net
+    #         image: /home/koder/vm_images/deb3.qcow2
 
 #------------------------------------------------------------------------------
 networks:
-    local_net:
+    ceph:
         range: 192.168.152.2 - 192.168.152.254 / 24
         bridge: virbr2
